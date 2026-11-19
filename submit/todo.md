@@ -17,36 +17,46 @@ submission here.
 
 ## Required work
 
-- [ ] **1. Define the voxel grid.** Use bounds x = [-2.5, 2.5] m, y = [-3, 3]
-  m, and z = [0, 2.5] m. Choose a resolution that fits memory (an optional
-  tighter initial volume is allowed). Record the voxel size and grid dimensions.
+- [x] **1. Define the voxel grid.** Implemented in
+  `reconstruct_visual_hull.py` with required bounds x = [-2.5, 2.5] m,
+  y = [-3, 3] m, and z = [0, 2.5] m. The selected isotropic voxel size is
+  0.05 m, giving a 100 x 120 x 50 grid (600,000 voxels). The logical occupancy
+  mask requires approximately 0.57 MiB; centers are stored as three 1D vectors
+  to avoid allocating a full 3D coordinate array.
 
-- [ ] **2. Compute the visual hull.** Initialize voxels as empty. Project each
-  voxel center into all eight views and mark it occupied only if its projection
-  lies inside every silhouette. Report the occupied-voxel count and its fraction
-  of the complete grid.
+- [x] **2. Compute the visual hull.** `reconstruct_visual_hull.py` loads the
+  eight calibration matrices and P4 silhouettes, projects every voxel center,
+  and keeps only voxels supported by all eight views. With the 100 x 120 x 50
+  grid, the visual hull contains 74,869 occupied voxels, or 0.124782 of the
+  600,000-voxel grid.
 
-- [ ] **3. Identify surface voxels.** Mark occupied voxels that have at least
-  one empty neighbor. Report the surface-voxel count and its fraction of the
-  complete grid.
+- [x] **3. Identify surface voxels.** `reconstruct_visual_hull.py` uses the
+  required six axis-aligned neighbors and treats an out-of-grid neighbor as
+  empty. It found 26,311 surface voxels, or 0.043852 of the full 600,000-voxel
+  grid.
 
-- [ ] **4. Generate output geometry.** For every face of a surface voxel that
-  borders empty space, add that face center to the point cloud. Report the point
-  count, compare it to the surface-voxel count, and explain why they differ.
+- [x] **4. Generate output geometry.** `reconstruct_visual_hull.py` creates a
+  face-center point for every exposed face and stores its outward normal/source
+  voxel for later true-color visibility checks. It generated 49,292 points from
+  26,311 surface voxels. The counts differ because one surface voxel can expose
+  more than one face.
 
-- [ ] **5. Assign false colors.** Find the min/max X, Y, and Z values of the
-  reconstructed points. Map X to red, Y to green, and Z to blue using the
-  specified 0-255 normalized-coordinate formula. Handle any zero-size range
-  safely.
+- [x] **5. Assign false colors.** `reconstruct_visual_hull.py` maps the output
+  point X, Y, and Z ranges independently to unsigned-byte red, green, and blue
+  values using the specified normalized-coordinate formula. A zero-size range
+  uses the safe constant value 128.
 
-- [ ] **6. Export the false-color PLY.** Write an ASCII PLY whose `element
-  vertex` count matches the output points; each vertex must contain x y z and
-  unsigned-char r g b values. Verify it opens in MeshLab.
+- [x] **6. Export the false-color PLY.** Wrote
+  `visual_hull_false_color.ply` as ASCII PLY with 49,292 vertices and six
+  fields per row: x y z r g b. Header and row-count verification passed.
+  MeshLab visual inspection remains to be performed locally.
 
-- [ ] **7. Assign true colors with visibility.** For each surface output point,
-  collect RGB samples from cameras with an unoccluded view of the associated
-  surface voxel, then assign the per-channel median. Implement and document the
-  visibility/occlusion test (the outward-vector method is one suggested option).
+- [ ] **7. Assign true colors with visibility.** Implemented as
+  `assign_true_colors(...)` in `reconstruct_visual_hull.py`. It accepts only
+  foreground projections whose outward point-to-camera ray is unoccluded by a
+  3D DDA voxel traversal, then uses the per-channel median; gray `(128,128,128)`
+  is the documented no-visible-camera fallback. Full-scene execution and visual
+  validation remain to be completed before this item is checked.
 
 - [ ] **8. Export the true-color PLY.** Write and inspect the final ASCII PLY
   using the true-color values.

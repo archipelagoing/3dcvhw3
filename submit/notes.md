@@ -1,6 +1,9 @@
 # CS 532 Homework 3 Notes: Voxel-Based Reconstruction
 
 ## The big picture
+? How can multiple 2D Camera views be combined to estimate 3d shape?
+? How do voxel grids & sillhouettes work?
+? Why are visibility checks necessary for realistic colors and shadows.
 
 This assignment reconstructs an approximate 3D dancer from multiple calibrated camera images and their binary silhouettes. Instead of guessing a continuous surface directly, I divide a known 3D region into small boxes (voxels). I keep only boxes that are consistent with every silhouette, convert the boundary of the kept boxes into a point cloud, color that point cloud, and export it as a PLY model.
 
