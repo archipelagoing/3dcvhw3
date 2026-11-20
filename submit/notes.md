@@ -1,18 +1,5 @@
 # CS 532 Homework 3 Notes: Voxel-Based Reconstruction
 
-## Current implementation status
-
-Steps 1 through 9 are implemented in `reconstruct_visual_hull.py`. The
-0.05-meter grid contains 600,000 voxels. The measured visual hull contains
-74,869 occupied voxels, 26,311 surface voxels, and 49,292 exposed face-center
-points. The script generated both `visual_hull_false_color.ply` and
-`visual_hull_true_color.ply`, each with 49,292 vertices.
-
-The full true-color pass completed for all output points. It used visible RGB
-samples for 17,775 points and the neutral-gray `(128,128,128)` fallback for
-31,517 points. The PLY files still need visual inspection in MeshLab before
-the final submission is packaged.
-
 ## The big picture
 ? How can multiple 2D Camera views be combined to estimate 3d shape?
 ? How do voxel grids & sillhouettes work?
