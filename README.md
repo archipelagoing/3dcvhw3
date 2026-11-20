@@ -211,6 +211,8 @@ The `element vertex` number must equal the actual number of data rows. Opening
 the file in MeshLab is a useful reality check: does the silhouette look like a
 dancer, and do the coordinate colors change in the directions I expected?
 
+![False-color reconstruction in MeshLab](figures/fig1.png)
+
 ## 7. Assign true colors with visibility
 
 This is where the reconstruction starts to look more like the original
@@ -255,6 +257,8 @@ face-center geometry as the false-color model. The file is ASCII PLY with
 49,292 vertices and the RGB values produced by the visibility-aware camera
 fusion.
 
+![True-color reconstruction in MeshLab](figures/fig2.png)
+
 ## 9. Bonus: two point lights and 3D shadows
 
 The bonus treats the occupied visual hull as an object that blocks light. Pick two light positions `L1` and `L2` outside the reconstructed volume. For each reconstructed surface point `p`, test whether light `L` reaches it with the segment
@@ -280,11 +284,11 @@ A straightforward implementation for this project is:
 
 These are my favorite three camera views of the bonus result:
 
-![Two-light bonus: camera 1](cam1.png)
+![Two-light bonus: camera 1](figures/cam1.png)
 
-![Two-light bonus: camera 2](cam2.png)
+![Two-light bonus: camera 2](figures/cam2.png)
 
-![Two-light bonus: camera 3](cam3.png)
+![Two-light bonus: camera 3](figures/cam3.png)
 
 The implementation changes projected foreground surface pixels only. It does
 not change the background. This is an approximate surface-point relighting
