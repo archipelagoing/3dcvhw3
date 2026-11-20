@@ -11,26 +11,64 @@ directly, I divide a known 3D region into small boxes called voxels. I keep
 only boxes that agree with every silhouette, turn the boundary of the kept
 boxes into a point cloud, color the points, and export them as a PLY model.
 
-## If you only read one section
+## TL;DR
 
-The short version is this: each camera gives me a different 2D view of the
-same dancer. A silhouette tells me where the dancer could be in that view, but
-it does not tell me the depth. I solve this by testing many tiny 3D boxes. If a
-box would look like part of the dancer from every camera, I keep it. If even
-one camera says the box is impossible, I remove it.
+- **Goal:** combine eight 2D camera views into one approximate 3D model of a
+  dancer.
+- **Silhouette:** a black-and-white image showing which pixels may belong to
+  the dancer. It gives shape information, but not depth.
+- **Voxel:** a small 3D box, similar to a pixel but with volume. I test each
+  voxel as a possible part of the dancer.
+- **Visual hull:** the voxels that remain possible from every camera. It should
+  contain the real object, but it can fill in concavities that never change any
+  silhouette.
+- **Surface voxel:** an occupied voxel touching EMPTY space in one of its six
+  axis-aligned directions.
+- **Output point:** the center of an exposed voxel face. One surface voxel can
+  create several output points.
+- **False color:** color made from position. Red follows X, green follows Y,
+  and blue follows Z. It helps me inspect the geometry.
+- **True color:** RGB sampled from the original camera images. A sample is used
+  only when the camera sees a foreground pixel and the 3D ray is not blocked.
+- **Visibility:** I use 3D DDA, a grid ray-tracing method, to walk through the
+  voxels between a point and a camera or light.
+- **Point light:** a light source placed at one 3D location. For this bonus, I
+  use `L1=(-4,-4,5)` and `L2=(4,2,4)` meters.
+- **Shadow test:** a surface point is shadowed from a light when another
+  occupied voxel blocks the point-to-light ray. Points blocked from both lights
+  are darkened; points reached by at least one light are blended lighter.
+- **Bonus output:** the projected light locations are marked with red pixels,
+  and the annotated images are saved as PPM files in
+  `submit/two_light_bonus/`.
 
-The kept boxes form a rough 3D shape called a **visual hull**. I then keep the
-outside faces of that shape as points. Finally, I color the points in two ways:
-false color shows where a point is in space, while true color samples the
-original photographs after checking whether a camera can actually see the
-point. That combination of simple 2D evidence, 3D geometry, and visibility
-checking is what makes the assignment interesting.
+The main process is:
 
-The reconstruction is called a **visual hull**. It should contain the real
-object if the silhouettes are accurate, but it cannot recover inward dents that
-never change the outline in any camera view. For example, a hollow indentation
-can remain filled in the visual hull. The silhouettes tell me what the dancer
-could occupy, not every detail of the dancer's actual surface.
+```text
+make a 100 x 120 x 50 voxel grid; start every voxel EMPTY
+
+for each voxel center:
+    project it into all eight cameras
+    if any projection is behind a camera, outside an image, or background:
+        reject the voxel
+    otherwise:
+        mark it OCCUPIED
+
+find occupied voxels touching EMPTY neighbors
+emit the center of every exposed voxel face as an output point
+
+false color: map X, Y, Z to red, green, blue
+true color: project each point, run a visibility ray, then median visible RGB
+bonus: for each surface point, run point-to-light visibility rays
+       darken points blocked from both lights
+       lighten points reached by at least one light
+       draw red markers for projected light locations
+       save the eight annotated camera images
+```
+
+The most important results are 74,869 occupied voxels, 26,311 surface voxels,
+and 49,292 output points. The assignment is interesting because it starts with
+simple 2D silhouettes and ends with a measurable 3D shape, camera-aware colors,
+and approximate shadows.
 
 ## Dataset and camera math
 
