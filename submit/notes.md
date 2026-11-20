@@ -222,34 +222,10 @@ pass rather than a full volumetric shadow map.
 
 These are approximate surface-point shadows because the object is a voxelized visual hull, not the exact dancer surface. That is acceptable as long as the method and limitations are stated clearly.
 
-## 10. Submission format and report contents
 
-The mandatory Canvas submission is one ZIP file containing one PDF and the
-final true-color PLY model. The PDF must include the authored source code, a
-brief explanation of the approach, and images or screenshots of the resulting
-model. If the false-color PLY is included, it should be labeled as an
-intermediate result.
-
-For future reference, the PDF report should document the voxel bounds,
-resolution, and memory choice; projection and silhouette carving; occupied and
-surface voxel counts and fractions; face-center geometry and why its count
-differs from the surface-voxel count; false-color normalization; ASCII PLY
-format; true-color projection and visibility testing; median color fusion;
-neutral-gray fallback behavior; and screenshots of the final models. If the
-bonus is included, explain the two light locations, point-to-light ray test,
-image reprojection and blending, output images, and limitations.
 
 ## What this assignment teaches
 
 The purpose is to connect multi-view geometry, camera calibration, silhouettes, volumetric representations, and rendering in one pipeline. It demonstrates how multiple 2D views constrain 3D shape, why silhouette intersection produces a visual hull rather than an exact model, how to extract a usable surface point cloud from voxels, and how geometric visibility is needed for credible color and shadow estimates. The final PLY gives a concrete, inspectable result of that entire reconstruction process.
 
-## Suggested implementation order
-
-1. Parse one camera matrix and verify that a few known 3D points project into sensible image locations.
-2. Build a low-resolution grid and implement silhouette occupancy for one camera, then all eight cameras.
-3. Count and visualize occupied and surface voxels before generating a PLY.
-4. Export the false-color PLY and inspect it in MeshLab.
-5. Add camera-center recovery and ray traversal for true-color visibility.
-6. Export and inspect the true-color PLY, then run and inspect the optional
-   two-light shadow/relighting pass.
 
