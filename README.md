@@ -5,20 +5,45 @@
 ? How do voxel grids & sillhouettes work?
 ? Why are visibility checks necessary for realistic colors and shadows?
 
-This assignment reconstructs an approximate 3D dancer from multiple calibrated camera images and their binary silhouettes. Instead of guessing a continuous surface directly, I divide a known 3D region into small boxes (voxels). I keep only boxes that are consistent with every silhouette, convert the boundary of the kept boxes into a point cloud, color that point cloud, and export it as a PLY model.
+Here, I reconstruct an approximate 3D dancer from multiple calibrated camera
+images and their binary silhouettes. Instead of guessing a smooth surface
+directly, I divide a known 3D region into small boxes called voxels. I keep
+only boxes that agree with every silhouette, turn the boundary of the kept
+boxes into a point cloud, color the points, and export them as a PLY model.
 
-The reconstruction is called a **visual hull**. It is guaranteed to contain the real object if the silhouettes are accurate, but it cannot recover concavities that no silhouette reveals. For example, a hollow indentation can still remain filled in the visual hull.
+## If you only read one section
+
+The short version is this: each camera gives me a different 2D view of the
+same dancer. A silhouette tells me where the dancer could be in that view, but
+it does not tell me the depth. I solve this by testing many tiny 3D boxes. If a
+box would look like part of the dancer from every camera, I keep it. If even
+one camera says the box is impossible, I remove it.
+
+The kept boxes form a rough 3D shape called a **visual hull**. I then keep the
+outside faces of that shape as points. Finally, I color the points in two ways:
+false color shows where a point is in space, while true color samples the
+original photographs after checking whether a camera can actually see the
+point. That combination of simple 2D evidence, 3D geometry, and visibility
+checking is what makes the assignment interesting.
+
+The reconstruction is called a **visual hull**. It should contain the real
+object if the silhouettes are accurate, but it cannot recover inward dents that
+never change the outline in any camera view. For example, a hollow indentation
+can remain filled in the visual hull. The silhouettes tell me what the dancer
+could occupy, not every detail of the dancer's actual surface.
 
 ## Dataset and camera math
 
-There are eight color images, eight silhouette images, and eight 3x4 camera
+I have eight color images, eight silhouette images, and eight 3x4 camera
 projection matrices. A world-space point is written in homogeneous form as
 
 ```text
 X = [X, Y, Z, 1]^T.
 ```
 
-For camera `i`, its projection matrix `P_i` maps the 3D point to homogeneous image coordinates:
+For camera `i`, its projection matrix `P_i` is the calibration information
+that tells me where a 3D point should appear in that image. It maps the point
+to temporary image coordinates:
 
 ```text
 [u_tilde, v_tilde, w_tilde]^T = P_i X.
@@ -26,14 +51,16 @@ u = u_tilde / w_tilde
 v = v_tilde / w_tilde
 ```
 
-`(u, v)` is the pixel location in that camera. A projection is usable only
-when `w_tilde` is positive and `(u, v)` lies inside the image. This code rounds
-the projected coordinates to the nearest pixel before reading a silhouette or
-RGB value.
+After dividing by `w_tilde`, `(u, v)` is the pixel location in that camera. A projection is useful only
+when `w_tilde` is positive and `(u, v)` lies inside the image. In my code, I
+round the projected coordinates to the nearest pixel before reading a
+silhouette or RGB value.
 
 ## 1. Define the voxel grid
 
-A **voxel** is a three-dimensional pixel: an axis-aligned rectangular box that represents a small region of space. The assignment bounding box is
+A **voxel** is a three-dimensional pixel: a small box that represents a small
+region of space. The smaller the voxels are, the more detail I can represent,
+but the more boxes I have to test. The assignment bounding box is
 
 ```text
 x in [-2.5, 2.5] meters
@@ -63,7 +90,10 @@ c(ix,iy,iz) = [xmin + (ix + 0.5)*dx,
                zmin + (iz + 0.5)*dz].
 ```
 
-There are `Nx * Ny * Nz` total voxels. Increasing resolution makes the shape less blocky, but increases memory and runtime approximately in proportion to that product. It is sensible to develop at low resolution first, then increase it after the projections and indexing work correctly.
+There are `Nx * Ny * Nz` total voxels. Increasing the resolution makes the
+shape less blocky, but also increases memory use and runtime. I found this to
+be a tradeoff between seeing more detail and waiting longer for every camera
+projection.
 
 For the implementation, keep at least an occupancy array such as
 `occupied[Nx, Ny, Nz]`. This code uses a one-byte flat `bytearray`; zero means
@@ -71,16 +101,25 @@ EMPTY and one means OCCUPIED. Initially, every value is zero.
 
 ## 2. Build the visual hull
 
-Each binary silhouette says which image pixels may belong to the dancer. A voxel is consistent with camera `i` when its center projects onto a foreground (nonzero) silhouette pixel in that camera. The visual-hull occupancy test is
+Now I ask the same question for every voxel: “Would this voxel project inside
+the dancer in every camera?” Each binary silhouette says which image pixels
+might belong to the dancer. A
+voxel is consistent with camera `i` when its center projects onto a foreground
+silhouette pixel in that camera. The visual-hull occupancy test is
 
 ```text
 occupied(v) = AND over cameras i of
               [project_i(center(v)) is valid AND silhouette_i(u_i, v_i) is foreground].
 ```
 
-In other words, start with a voxel as a possible part of the dancer and reject it as soon as one camera sees its projection outside the dancer silhouette. This is the discrete version of intersecting the generalized cones formed by back-projecting all silhouettes into 3D.
+In plain language, I start by treating every voxel as possible dancer space.
+Then I *reject* a voxel as soon as one camera sees its center outside the dancer
+silhouette. This is the discrete version of intersecting the generalized cones
+formed by back-projecting all of the silhouettes into 3D. Watching the 2D
+silhouettes gradually turn into a 3D volume was one of the most satisfying
+parts of the assignment.
 
-Report both quantities requested by the assignment:
+The two numbers I keep track of are:
 
 ```text
 visual_hull_count = number of occupied voxels
@@ -89,13 +128,17 @@ visual_hull_fraction = visual_hull_count / (Nx * Ny * Nz).
 
 ## 3. Find surface voxels
 
-A **surface voxel** is an occupied voxel with at least one neighboring voxel that is empty. With 6-connected neighbors, the neighboring offsets are
+After carving, most kept voxels are inside the shape. I only need the boundary
+for the point-cloud output, so I look for kept voxels that touch empty space. A
+**surface voxel** is an occupied voxel with at least one neighboring voxel that
+is empty. With 6-connected neighbors, the neighboring offsets are
 
 ```text
 (+/-1, 0, 0), (0, +/-1, 0), (0, 0, +/-1).
 ```
 
-For each occupied voxel, inspect these six locations. A neighbor outside the grid should normally be treated as empty because the grid boundary exposes a face. The test is
+For each occupied voxel, I inspect these six locations. A neighbor outside the
+grid is treated as *empty* because the grid boundary *exposes a face.* The test is
 
 ```text
 surface(v) = occupied(v) AND (at least one 6-neighbor is empty).
@@ -105,7 +148,10 @@ Interior occupied voxels are not surface voxels because they are completely surr
 
 ## 4. Create the output geometry
 
-The PLY output is a point cloud, not a cube mesh. For every surface voxel, add one output point at the center of each face adjacent to an empty neighbor. If the voxel center is `(cx, cy, cz)`, its six possible face centers are
+The assignment asks for points rather than a closed triangle mesh. For every
+surface voxel, I
+add one point at the center of each face next to an empty neighbor. If the
+voxel center is `(cx, cy, cz)`, the six possible face centers are
 
 ```text
 (cx - dx/2, cy,          cz)          (cx + dx/2, cy,          cz)
@@ -115,11 +161,14 @@ The PLY output is a point cloud, not a cube mesh. For every surface voxel, add o
 
 Add only the face corresponding to an empty neighbor. A surface voxel can have one through six exposed faces, so the output-point count is generally different from the number of surface voxels. Adjacent occupied voxels share an internal face, which is not emitted, while a voxel on a corner can contribute multiple points.
 
-It is useful to store, alongside each point, the voxel index and outward face normal. That information makes the true-color visibility test easier later.
+I also store the voxel index and outward face normal with each point. At first
+this seemed like extra bookkeeping, but it becomes important when I need to
+start a visibility ray just outside the surface.
 
 ## 5. Assign false colors
 
-False color visualizes position, not the image appearance of the dancer. First, find the coordinate bounds of the generated output points:
+False color visualizes position, not the image appearance of the dancer. I
+first find the coordinate bounds of the generated output points:
 
 ```text
 Xmin, Xmax, Ymin, Ymax, Zmin, Zmax.
@@ -133,7 +182,11 @@ G = round(255 * (Y - Ymin) / (Ymax - Ymin))
 B = round(255 * (Z - Zmin) / (Zmax - Zmin)).
 ```
 
-Clamp every result to `[0, 255]` and write it as an unsigned byte. If a range such as `Xmax - Xmin` is zero, use a safe constant (for example 0 or 128) for that channel instead of dividing by zero. This color scheme is a debugging aid: red changes along x, green along y, and blue along z, so flipped axes and incorrectly positioned geometry become easy to notice.
+Clamp every result to `[0, 255]` and write it as an unsigned byte. If a range
+such as `Xmax - Xmin` is zero, use a safe constant (for example 0 or 128) for
+that channel instead of dividing by zero. This color scheme is a debugging
+aid. Red changes along x, green along y, and blue along z, so flipped axes or
+incorrectly positioned geometry are easier to notice.
 
 ## 6. Export the false-color PLY
 
@@ -154,11 +207,20 @@ end_header
 x y z r g b
 ```
 
-The `element vertex` number must equal the actual number of data rows. Open the file in MeshLab and check that the silhouette resembles the dancer and that the coordinate-gradient colors change smoothly in the expected directions.
+The `element vertex` number must equal the actual number of data rows. Opening
+the file in MeshLab is a useful reality check: does the silhouette look like a
+dancer, and do the coordinate colors change in the directions I expected?
 
 ## 7. Assign true colors with visibility
 
-True color estimates each surface point's real color from the eight RGB camera images. Project the point into every camera with the camera math above. A camera can contribute an RGB sample only when:
+This is where the reconstruction starts to look more like the original
+photographs. A point may project onto a dancer-colored pixel even when another
+part of the shape is actually in front of it. I need to check the path between
+the point and the camera before trusting that pixel.
+
+True color estimates each surface point's color from the eight RGB camera
+images. Project the point into every camera with the camera math above. A
+camera can contribute an RGB sample only when:
 
 1. The projection is in front of the camera and inside the image.
 2. The projected pixel is inside that camera's silhouette.
