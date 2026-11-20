@@ -2,7 +2,7 @@
 
 ## Current implementation status
 
-Steps 1 through 8 are implemented in `reconstruct_visual_hull.py`. The
+Steps 1 through 9 are implemented in `reconstruct_visual_hull.py`. The
 0.05-meter grid contains 600,000 voxels. The measured visual hull contains
 74,869 occupied voxels, 26,311 surface voxels, and 49,292 exposed face-center
 points. The script generated both `visual_hull_false_color.ply` and
@@ -16,7 +16,7 @@ the final submission is packaged.
 ## The big picture
 ? How can multiple 2D Camera views be combined to estimate 3d shape?
 ? How do voxel grids & sillhouettes work?
-? Why are visibility checks necessary for realistic colors and shadows.
+? Why are visibility checks necessary for realistic colors and shadows?
 
 This assignment reconstructs an approximate 3D dancer from multiple calibrated camera images and their binary silhouettes. Instead of guessing a continuous surface directly, I divide a known 3D region into small boxes (voxels). I keep only boxes that are consistent with every silhouette, convert the boundary of the kept boxes into a point cloud, color that point cloud, and export it as a PLY model.
 
@@ -24,7 +24,8 @@ The reconstruction is called a **visual hull**. It is guaranteed to contain the 
 
 ## Dataset and camera math
 
-There are eight camera images, eight silhouette images, and eight 3x4 camera projection matrices. A world-space point is written in homogeneous form as
+There are eight color images, eight silhouette images, and eight 3x4 camera
+projection matrices. A world-space point is written in homogeneous form as
 
 ```text
 X = [X, Y, Z, 1]^T.
@@ -38,7 +39,10 @@ u = u_tilde / w_tilde
 v = v_tilde / w_tilde
 ```
 
-`(u, v)` is the pixel location in that camera. A projection is usable only when `w_tilde` is positive (the point is in front of the camera) and `(u, v)` lies inside the image. Pixel coordinates should be rounded or interpolated carefully before reading a silhouette or RGB value.
+`(u, v)` is the pixel location in that camera. A projection is usable only
+when `w_tilde` is positive and `(u, v)` lies inside the image. This code rounds
+the projected coordinates to the nearest pixel before reading a silhouette or
+RGB value.
 
 ## 1. Define the voxel grid
 
@@ -74,7 +78,9 @@ c(ix,iy,iz) = [xmin + (ix + 0.5)*dx,
 
 There are `Nx * Ny * Nz` total voxels. Increasing resolution makes the shape less blocky, but increases memory and runtime approximately in proportion to that product. It is sensible to develop at low resolution first, then increase it after the projections and indexing work correctly.
 
-For the implementation, keep at least a Boolean array such as `occupied[Nx, Ny, Nz]`. Initially, every value is `false`/EMPTY.
+For the implementation, keep at least an occupancy array such as
+`occupied[Nx, Ny, Nz]`. This code uses a one-byte flat `bytearray`; zero means
+EMPTY and one means OCCUPIED. Initially, every value is zero.
 
 ## 2. Build the visual hull
 
@@ -191,11 +197,18 @@ G = median_j(G_j)
 B = median_j(B_j).
 ```
 
-The median is robust to small calibration errors, silhouette-edge pixels, and a bad sample from one view. If no camera passes the visibility test, choose and document a fallback, such as the closest camera with a valid projection, or a neutral color. Then export another ASCII PLY using the same geometry and the true RGB values.
+The median is robust to small calibration errors, silhouette-edge pixels, and a bad sample from one view. If no camera passes the visibility test, use and document the neutral-gray fallback `(128,128,128)`. The implementation then exports another ASCII PLY using the same geometry and the true RGB values.
+
+## 8. Write the true-color PLY
+
+The true-color pass writes `visual_hull_true_color.ply` using the same
+face-center geometry as the false-color model. The file is ASCII PLY with
+49,292 vertices and the RGB values produced by the visibility-aware camera
+fusion.
 
 ## 9. Bonus: two point lights and 3D shadows
 
-The bonus treats the occupied visual hull as an object that blocks light. Pick two light positions `L1` and `L2` outside the reconstructed volume. For a voxel or sample point `p`, test whether light `L` reaches it with the segment
+The bonus treats the occupied visual hull as an object that blocks light. Pick two light positions `L1` and `L2` outside the reconstructed volume. For each reconstructed surface point `p`, test whether light `L` reaches it with the segment
 
 ```text
 s(t) = L + t(p - L), where 0 < t < 1.
@@ -203,15 +216,24 @@ s(t) = L + t(p - L), where 0 < t < 1.
 
 If this segment intersects an occupied voxel before reaching `p`, the point is in shadow from that light. This is the same ray-occlusion idea used for camera visibility, but the ray starts at a light rather than a camera.
 
-A straightforward implementation is:
+A straightforward implementation for this project is:
 
-1. For each light and each voxel center, traverse the grid along the light-to-voxel segment.
-2. Mark an empty voxel as shadowed when an occupied voxel lies between it and the light.
-3. Reproject shadowed voxels into each camera and darken the corresponding pixels. Use a mask or alpha blend so multiple projected voxels do not produce uncontrolled repeated darkening.
-4. Reproject the unoccluded region between each light and the reconstructed surface and draw it lighter, as requested. Also project/draw a visible marker for each light position.
-5. Save annotated images for the report and explain the light positions, ray traversal, shadow criterion, and pixel-blending rule.
+1. Use the two selected lights `L1=(-4,-4,5)` and `L2=(4,2,4)` meters.
+2. For each reconstructed surface point and each light, traverse the grid along
+   the point-to-light segment with the existing 3D DDA routine.
+3. If another occupied voxel blocks both light rays, darken the point after it
+   is projected into a camera image.
+4. If at least one light can reach the point, blend the projected pixel toward
+   white.
+5. Project each light into the camera image and draw a red marker when it is
+   inside the image.
+6. Save one annotated PPM image per camera in `submit/two_light_bonus/`.
 
-These are approximate volumetric shadows because the object is a voxelized visual hull, not the exact dancer surface. That is acceptable as long as the method and limitations are stated clearly.
+The implementation changes projected foreground surface pixels only. It does
+not change the background. This is an approximate surface-point relighting
+pass rather than a full volumetric shadow map.
+
+These are approximate surface-point shadows because the object is a voxelized visual hull, not the exact dancer surface. That is acceptable as long as the method and limitations are stated clearly.
 
 ## 10. Submission format and report contents
 
@@ -221,14 +243,14 @@ brief explanation of the approach, and images or screenshots of the resulting
 model. If the false-color PLY is included, it should be labeled as an
 intermediate result.
 
-The report should document the voxel bounds, resolution, and memory choice;
-projection and silhouette carving; occupied and surface voxel counts;
-face-center geometry and why its count differs from the surface-voxel count;
-false-color normalization; ASCII PLY format; true-color projection and
-visibility testing; median color fusion; fallback behavior; and screenshots of
-the final model. If the bonus is completed, also explain the two light
-locations, shadow-ray test, image reprojection/blending, output images, and
-limitations.
+For future reference, the PDF report should document the voxel bounds,
+resolution, and memory choice; projection and silhouette carving; occupied and
+surface voxel counts and fractions; face-center geometry and why its count
+differs from the surface-voxel count; false-color normalization; ASCII PLY
+format; true-color projection and visibility testing; median color fusion;
+neutral-gray fallback behavior; and screenshots of the final models. If the
+bonus is included, explain the two light locations, point-to-light ray test,
+image reprojection and blending, output images, and limitations.
 
 ## What this assignment teaches
 
@@ -241,6 +263,6 @@ The purpose is to connect multi-view geometry, camera calibration, silhouettes, 
 3. Count and visualize occupied and surface voxels before generating a PLY.
 4. Export the false-color PLY and inspect it in MeshLab.
 5. Add camera-center recovery and ray traversal for true-color visibility.
-6. Export and inspect the true-color PLY, then implement the optional
+6. Export and inspect the true-color PLY, then run and inspect the optional
    two-light shadow/relighting pass.
 

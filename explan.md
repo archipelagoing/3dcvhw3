@@ -3,11 +3,10 @@
 ## Purpose and implementation status
 
 This document describes the Python algorithm used to reconstruct the dancer
-from eight calibrated RGB images and their binary silhouettes. It is written as
-the implementation plan and report narrative for the submission. The grid and
-visual-hull results below were measured by the current program; later
-surface/color/PLY results must be filled in after those steps are implemented
-and checked in MeshLab.
+from eight calibrated RGB images and their binary silhouettes. It serves as
+the implementation explanation and report narrative for the submission. The
+measured results below come from the current program. MeshLab screenshots and
+final visual-quality observations still need to be added before submission.
 
 The input set contains:
 
@@ -102,16 +101,14 @@ candidate voxels, so the silhouette stage requires roughly (8N) projections.
 ### Pseudocode: initialize grid
 
 ```text
-choose Nx, Ny, Nz
-dx = 5.0 / Nx; dy = 6.0 / Ny; dz = 2.5 / Nz
-occupied = false[Nx, Ny, Nz]
+voxelSize = 0.05
+Nx = 100; Ny = 120; Nz = 50
+dx = dy = dz = voxelSize
+occupied = bytearray(Nx * Ny * Nz)  # all values start at 0 / EMPTY
 
-for ix = 0 .. Nx-1
-  for iy = 0 .. Ny-1
-    for iz = 0 .. Nz-1
-      center[ix,iy,iz] = [-2.5+(ix+0.5)*dx,
-                          -3.0+(iy+0.5)*dy,
-                           0.0+(iz+0.5)*dz]
+x_centers = [-2.5 + (ix + 0.5)*dx for ix in 0 .. Nx-1]
+y_centers = [-3.0 + (iy + 0.5)*dy for iy in 0 .. Ny-1]
+z_centers = [ 0.0 + (iz + 0.5)*dz for iz in 0 .. Nz-1]
 ```
 
 ## 3. Reconstruct the visual hull from silhouettes
@@ -197,8 +194,8 @@ For every exposed face, add a point at the face center. For voxel center
 \]
 
 and the four other signed-axis counterparts. Store both the originating voxel
-index and the outward normal with each point; these are needed later for robust
-visibility handling.
+index and the outward normal with each point; these are used by the visibility
+test below.
 
 The output-point count differs from the surface-voxel count because one surface
 voxel may have multiple exposed faces.
@@ -209,15 +206,25 @@ voxel may have multiple exposed faces.
 surfaceCount = 0
 points = empty list
 for each occupied voxel v
+  exposed = false
   for each of six neighbor directions d
     n = neighbor(v, d)
     if n is outside grid OR occupied[n] == false
-      mark v as surface
-      append faceCenter(v, d), outwardNormal(d), sourceVoxel(v) to points
+      exposed = true
     end
   end
-  if v had at least one exposed face
+  if exposed
+    surface[v] = 1
     surfaceCount += 1
+  end
+end
+
+for each marked surface voxel v
+  for each of six neighbor directions d
+    n = neighbor(v, d)
+    if n is outside grid OR occupied[n] == false
+      append faceCenter(v, d), outwardNormal(d), sourceVoxel(v) to points
+    end
   end
 end
 ```
@@ -298,8 +305,8 @@ R(q)=\operatorname{median}_{j\in\mathcal I(q)}R_j,
 \]
 
 The median suppresses isolated incorrect samples caused by calibration or
-silhouette-edge errors. If no camera is visible, use and document a fallback,
-such as neutral gray or the nearest valid projection.
+silhouette-edge errors. If no camera is visible, the code uses neutral gray
+`(128,128,128)`.
 
 ### Pseudocode: true color
 
@@ -308,10 +315,14 @@ for each surface point q
   samples = empty list
   for i = 1 .. 8
     project q into RGB image i
-    if projection invalid or projected pixel is background
+    if w <= 0 or projected pixel is outside the image
       continue
     end
-    if rayFromFaceToCamera(q, normal, C[i]) intersects occupied voxel
+    if projected silhouette pixel is background
+      continue
+    end
+    move a small distance from q along its outward normal
+    if 3D_DDA(q, C[i]) finds another occupied voxel
       continue
     end
     append RGBImage[i](projectedPixel) to samples
@@ -319,7 +330,7 @@ for each surface point q
   if samples is nonempty
     q.color = channelwiseMedian(samples)
   else
-    q.color = documentedFallback
+    q.color = (128,128,128)
   end
 end
 write ASCII PLY using unchanged geometry and true colors
@@ -340,7 +351,7 @@ I will validate the result with the following checks:
 7. Report the selected grid dimensions, voxel size, counts, fractions, and
    fallback behavior for points with no visible camera.
 
-## Final results to complete after execution
+## Current measured results
 
 | Quantity | Result |
 | --- | --- |
@@ -357,15 +368,41 @@ I will validate the result with the following checks:
 
 ## 9. Bonus: two point lights and 3D shadows
 
-The optional bonus is treated as Step 9 in the project checklist. Choose two
-point lights outside the reconstructed volume and document their world-space
-coordinates. For each light and each voxel or surface point, use a 3D DDA ray
-from the light to the point. If another occupied voxel blocks the segment, the
-point is shadowed from that light. Reproject shadowed points into each input
-image and darken only valid foreground pixels. Reproject light-facing regions
-and blend them lighter, then annotate the projected light locations when they
-fall inside an image. Save the resulting images and explain the ray test,
-projection, blending rule, and voxelized-visual-hull limitations.
+The optional bonus is treated as Step 9 in the project checklist. The current
+code uses lights `(-4,-4,5)` and `(4,2,4)` meters. For each surface point and
+each light, it uses a 3D DDA ray from the point to the light. If another
+occupied voxel blocks the ray, that light does not illuminate the point.
+Shadowed points are darkened in each input image. Points visible to at least
+one light are blended lighter. The projected light positions are marked red.
+The output images are saved as PPM files in `submit/two_light_bonus/`.
+
+### Pseudocode: two-light bonus
+
+```text
+lights = [(-4,-4,5), (4,2,4)]
+for each camera image
+  copy the original RGB pixels
+  for each output surface point q
+    project q into the camera
+    if the projection is outside the image or silhouette
+      continue
+    end
+    lit = false
+    for each light L
+      if 3D_DDA(q, L) has no other occupied voxel
+        lit = true
+      end
+    end
+    if lit
+      blend the projected pixel toward white
+    else
+      darken the projected pixel
+    end
+  end
+  project each light and draw a red marker when it is in the image
+  save the changed image as a PPM file
+end
+```
 
 ## 10. Submission format
 

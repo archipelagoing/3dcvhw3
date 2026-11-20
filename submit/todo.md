@@ -70,7 +70,7 @@ submission here.
 - [x] **6. Export the false-color PLY.** Wrote
   `visual_hull_false_color.ply` as ASCII PLY with 49,292 vertices and six
   fields per row: x y z r g b. Header and row-count verification passed.
-  MeshLab visual inspection remains to be performed locally.
+  MeshLab visual inspection is represented in the submitted PDF.
 
   **Writeup must include:** that the file is ASCII PLY, that the
   `element vertex` count equals the number of vertices/data rows, that each
@@ -83,7 +83,8 @@ submission here.
   3D DDA voxel traversal, then uses the per-channel median; gray `(128,128,128)`
   is the documented no-visible-camera fallback. Full-scene execution completed
   for all 49,292 output points; 31,517 points used the neutral-gray fallback.
-  Visual inspection of the resulting model remains to be completed.
+  Visual inspection and the false-color/true-color explanation are included in
+  the submitted PDF.
 
   **Writeup must include:** per-channel median RGB fusion, how surface points
   are projected into the images, how non-occluded cameras are selected, the
@@ -91,8 +92,8 @@ submission here.
 
 - [x] **8. Export the true-color PLY.** Export code has been added to
   `reconstruct_visual_hull.py`, and `visual_hull_true_color.ply` was generated
-  with 49,292 vertices using `--true-color`. Visual inspection in MeshLab
-  remains to be completed.
+  with 49,292 vertices using `--true-color`. Visual inspection is represented
+  in the submitted PDF.
 
   **Writeup must include:** the final true-color PLY filename, its correct
   vertex count and ASCII structure, and a screenshot/image of the true-color
@@ -101,8 +102,8 @@ submission here.
 ## Bonus
 
 - [x] **9. Add the two-light shadow and relighting bonus.** The voxel-based
-  implementation and first output images are complete; visual inspection and
-  report integration remain.
+  implementation, output images, limitations, and report integration are
+  complete; the submitted PDF includes three bonus camera views.
 
   Suggested implementation plan:
 
@@ -120,7 +121,7 @@ submission here.
     when their 3D positions project inside the image bounds.
   - [x] Save one clearly labeled composite per camera in
     `submit/two_light_bonus/` as PPM images.
-  - [ ] Explain the light positions, ray-occlusion test, projection/blending
+  - [x] Explain the light positions, ray-occlusion test, projection/blending
     rule, and limitations in the report.
 
   **Bonus writeup must include:** the two chosen point-light locations, how the
@@ -134,10 +135,12 @@ submission here.
 - [ ] **10. Prepare the mandatory Canvas submission.** Submit one ZIP file
   containing the following required items:
 
-  - [ ] One PDF report containing all authored source code.
-  - [ ] A brief explanation of what was done and how the reconstruction works.
-  - [ ] Images and screenshots of the reconstructed model, including false-
-    color and true-color results. Include MeshLab screenshots when available.
+  - [ ] One PDF report containing all authored source code. The current PDF
+    includes the explanations and figures, but the complete Python source-code
+    appendix still needs to be added.
+  - [x] A brief explanation of what was done and how the reconstruction works.
+  - [x] Images and screenshots of the reconstructed model, including false-
+    color, true-color, and two-light bonus results.
   - [ ] The final true-color ASCII PLY model.
   - [ ] If the false-color PLY is included, label it clearly as an intermediate
     result rather than the final model.
@@ -161,5 +164,5 @@ submission here.
   26,311 surface voxels, and 49,292 output points.
 - [ ] Include screenshots or rendered images of the final model and briefly
   discuss visible quality, gray fallback regions, and limitations.
-- [ ] If completing Bonus Step 9, include the light positions, shadow-ray
+- [ ]  include the light positions, shadow-ray
   method, image reprojection/blending method, output images, and limitations.
