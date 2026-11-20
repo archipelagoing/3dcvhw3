@@ -20,6 +20,14 @@ The output is a point-cloud approximation of the dancer's **visual hull**:
 1. a false-color PLY that colors geometry by world position; and
 2. a true-color PLY that fuses only unoccluded RGB observations.
 
+The current implementation completes Steps 1–8. At the selected 5 cm
+resolution, it produces 74,869 occupied voxels, 26,311 surface voxels, and
+49,292 exposed face-center points. It writes both
+`visual_hull_false_color.ply` and `visual_hull_true_color.ply` as ASCII PLY
+files with 49,292 vertices each. The true-color run used camera samples for
+17,775 points and the neutral-gray fallback for 31,517 points; visual MeshLab
+inspection remains part of final validation.
+
 ## 1. Camera model and coordinate conventions
 
 A world point is represented in homogeneous coordinates as
@@ -343,6 +351,30 @@ I will validate the result with the following checks:
 | Surface voxels | 26,311 |
 | Surface fraction | 0.043852 (4.3852%) |
 | Output face-center points | 49,292 |
-| True-color fallback policy | TBD |
+| True-color fallback policy | Neutral gray `(128,128,128)` |
 | False-color PLY filename | `visual_hull_false_color.ply` |
-| True-color PLY filename | TBD |
+| True-color PLY filename | `visual_hull_true_color.ply` |
+
+## 9. Bonus: two point lights and 3D shadows
+
+The optional bonus is treated as Step 9 in the project checklist. Choose two
+point lights outside the reconstructed volume and document their world-space
+coordinates. For each light and each voxel or surface point, use a 3D DDA ray
+from the light to the point. If another occupied voxel blocks the segment, the
+point is shadowed from that light. Reproject shadowed points into each input
+image and darken only valid foreground pixels. Reproject light-facing regions
+and blend them lighter, then annotate the projected light locations when they
+fall inside an image. Save the resulting images and explain the ray test,
+projection, blending rule, and voxelized-visual-hull limitations.
+
+## 10. Submission format
+
+The mandatory Canvas submission is a ZIP file containing one PDF and the final
+true-color PLY model. The PDF must contain the source code, a brief explanation
+of what was done, and images or screenshots of the reconstructed model. The
+report should include the grid and camera method, all measured counts and
+fractions, surface and face-center reasoning, false-color and true-color
+methods, visibility and median fusion, fallback behavior, PLY details, and
+final screenshots. If the bonus is completed, include its light positions,
+shadow/reprojection method, output images, and limitations. Clearly label the
+false-color PLY as an intermediate file if it is also included.

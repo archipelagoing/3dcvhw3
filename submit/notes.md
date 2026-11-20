@@ -1,5 +1,18 @@
 # CS 532 Homework 3 Notes: Voxel-Based Reconstruction
 
+## Current implementation status
+
+Steps 1 through 8 are implemented in `reconstruct_visual_hull.py`. The
+0.05-meter grid contains 600,000 voxels. The measured visual hull contains
+74,869 occupied voxels, 26,311 surface voxels, and 49,292 exposed face-center
+points. The script generated both `visual_hull_false_color.ply` and
+`visual_hull_true_color.ply`, each with 49,292 vertices.
+
+The full true-color pass completed for all output points. It used visible RGB
+samples for 17,775 points and the neutral-gray `(128,128,128)` fallback for
+31,517 points. The PLY files still need visual inspection in MeshLab before
+the final submission is packaged.
+
 ## The big picture
 ? How can multiple 2D Camera views be combined to estimate 3d shape?
 ? How do voxel grids & sillhouettes work?
@@ -180,7 +193,7 @@ B = median_j(B_j).
 
 The median is robust to small calibration errors, silhouette-edge pixels, and a bad sample from one view. If no camera passes the visibility test, choose and document a fallback, such as the closest camera with a valid projection, or a neutral color. Then export another ASCII PLY using the same geometry and the true RGB values.
 
-## 8. Bonus: two point lights and 3D shadows
+## 9. Bonus: two point lights and 3D shadows
 
 The bonus treats the occupied visual hull as an object that blocks light. Pick two light positions `L1` and `L2` outside the reconstructed volume. For a voxel or sample point `p`, test whether light `L` reaches it with the segment
 
@@ -200,6 +213,23 @@ A straightforward implementation is:
 
 These are approximate volumetric shadows because the object is a voxelized visual hull, not the exact dancer surface. That is acceptable as long as the method and limitations are stated clearly.
 
+## 10. Submission format and report contents
+
+The mandatory Canvas submission is one ZIP file containing one PDF and the
+final true-color PLY model. The PDF must include the authored source code, a
+brief explanation of the approach, and images or screenshots of the resulting
+model. If the false-color PLY is included, it should be labeled as an
+intermediate result.
+
+The report should document the voxel bounds, resolution, and memory choice;
+projection and silhouette carving; occupied and surface voxel counts;
+face-center geometry and why its count differs from the surface-voxel count;
+false-color normalization; ASCII PLY format; true-color projection and
+visibility testing; median color fusion; fallback behavior; and screenshots of
+the final model. If the bonus is completed, also explain the two light
+locations, shadow-ray test, image reprojection/blending, output images, and
+limitations.
+
 ## What this assignment teaches
 
 The purpose is to connect multi-view geometry, camera calibration, silhouettes, volumetric representations, and rendering in one pipeline. It demonstrates how multiple 2D views constrain 3D shape, why silhouette intersection produces a visual hull rather than an exact model, how to extract a usable surface point cloud from voxels, and how geometric visibility is needed for credible color and shadow estimates. The final PLY gives a concrete, inspectable result of that entire reconstruction process.
@@ -211,5 +241,6 @@ The purpose is to connect multi-view geometry, camera calibration, silhouettes, 
 3. Count and visualize occupied and surface voxels before generating a PLY.
 4. Export the false-color PLY and inspect it in MeshLab.
 5. Add camera-center recovery and ray traversal for true-color visibility.
-6. Export the true-color PLY, then implement the optional light/shadow pass.
+6. Export and inspect the true-color PLY, then implement the optional
+   two-light shadow/relighting pass.
 

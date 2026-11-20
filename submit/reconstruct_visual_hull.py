@@ -1,10 +1,3 @@
-"""Voxel reconstruction for CS 532 Homework 3.
-
-Step 1 is implemented: define the assignment's metric voxel grid. Subsequent
-steps will add camera/silhouette carving, surface extraction, color fusion, and
-ASCII PLY export.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,10 +9,10 @@ import time
 import zlib
 
 
+# This stores the world-space limits and the occupancy volume. I keep the
+# centers in three separate lists instead of building a large XYZ array.
 @dataclass(frozen=True)
 class VoxelGrid:
-    """World-space grid metadata and an initially empty occupancy volume."""
-
     xmin: float
     xmax: float
     ymin: float
@@ -46,25 +39,26 @@ class VoxelGrid:
         return len(self.occupied)
 
 
+# A P4 silhouette is a one-bit image used to decide whether a projected voxel
+# is still a possible part of the object.
 @dataclass(frozen=True)
 class BinarySilhouette:
-    """A Netpbm P4 bitmap; foreground pixels are black (bit value 1)."""
-
     width: int
     height: int
     row_bytes: int
     pixels: bytes
 
     def is_foreground(self, x: int, y: int) -> bool:
+        # PBM pixels are packed left to right, most-significant bit first.
         byte_index = y * self.row_bytes + x // 8
         bit_mask = 1 << (7 - (x % 8))
         return bool(self.pixels[byte_index] & bit_mask)
 
 
+# Each output point is the center of an exposed voxel face. The normal and
+# source voxel are kept for the later camera visibility test.
 @dataclass(frozen=True)
 class SurfacePoint:
-    """An exposed voxel-face center, its outward normal, and source voxel."""
-
     x: float
     y: float
     z: float
@@ -72,10 +66,9 @@ class SurfacePoint:
     voxel: tuple[int, int, int]
 
 
+# This is the same point geometry after an RGB value has been assigned.
 @dataclass(frozen=True)
 class ColoredPoint:
-    """A point-cloud vertex with unsigned-byte RGB color."""
-
     x: float
     y: float
     z: float
@@ -84,6 +77,7 @@ class ColoredPoint:
     blue: int
 
 
+# The PNG loader stores decoded RGB bytes in one flat row-major array.
 @dataclass(frozen=True)
 class RGBImage:
     width: int
@@ -91,17 +85,20 @@ class RGBImage:
     pixels: bytes
 
     def rgb(self, x: int, y: int) -> tuple[int, int, int]:
+        # Every pixel uses three consecutive bytes: red, green, and blue.
         index = 3 * (y * self.width + x)
         return self.pixels[index], self.pixels[index + 1], self.pixels[index + 2]
 
 
 def define_voxel_grid(voxel_size_m: float = 0.05) -> VoxelGrid:
-    """Create the required [-2.5,2.5] x [-3,3] x [0,2.5] meter grid.
-
-    A 5 cm isotropic spacing produces a 100 x 120 x 50 grid (600,000 voxels).
-    Centers are stored as three 1D arrays so no full coordinate tensor is
-    allocated until a later reconstruction step truly needs one.
-    """
+    # Step 1 assignment requirement:
+    # Define a voxel grid over x=[-2.5,2.5] m, y=[-3,3] m, and z=[0,2.5] m.
+    # Choose a discretization that fits comfortably in memory. The purpose of
+    # this grid is to estimate which small volume cells are occupied and which
+    # cells are free space. Here I use 0.05 m voxels, giving 600,000 cells.
+    # The occupancy array starts empty and is filled during Step 2.
+    #
+    # Step 1 implementation: make the assignment volume and store voxel centers.
     if voxel_size_m <= 0:
         raise ValueError("voxel_size_m must be positive")
 
@@ -147,7 +144,7 @@ def define_voxel_grid(voxel_size_m: float = 0.05) -> VoxelGrid:
 
 
 def load_projection_matrix(path: Path) -> tuple[tuple[float, ...], ...]:
-    """Load the 12 whitespace-delimited camera values from the XML wrapper."""
+    # The XML wrapper contains the 3 rows of a 3x4 camera matrix.
     text = path.read_text()
     match = re.search(r"<camera>\s*(.*?)\s*</camera>", text, re.DOTALL)
     if match is None:
@@ -161,7 +158,7 @@ def load_projection_matrix(path: Path) -> tuple[tuple[float, ...], ...]:
 
 
 def _read_pbm_token(stream) -> bytes:
-    """Read one P4 header token, skipping whitespace and # comments."""
+    # PBM headers contain whitespace and may contain comments.
     token = bytearray()
     while True:
         char = stream.read(1)
@@ -182,7 +179,7 @@ def _read_pbm_token(stream) -> bytes:
 
 
 def load_p4_pbm(path: Path) -> BinarySilhouette:
-    """Load a raw PBM (P4) silhouette using only the Python standard library."""
+    # P4 stores one bit per pixel, with each row padded to a whole byte.
     with path.open("rb") as stream:
         magic = _read_pbm_token(stream)
         if magic != b"P4":
@@ -197,7 +194,7 @@ def load_p4_pbm(path: Path) -> BinarySilhouette:
 
 
 def load_rgb_png(path: Path) -> RGBImage:
-    """Load the supplied non-interlaced 8-bit RGB PNGs without dependencies."""
+    # The supplied images are simple 8-bit RGB PNGs. Decode their scanline filters.
     raw = path.read_bytes()
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError(f"Not a PNG: {path}")
@@ -215,6 +212,8 @@ def load_rgb_png(path: Path) -> RGBImage:
     encoded = zlib.decompress(b"".join(data for kind, data in chunks if kind == b"IDAT"))
     stride, previous, output, pos = width * 3, bytearray(width * 3), bytearray(), 0
     for _ in range(height):
+        # Each PNG row starts with a filter byte. Reverse that filter so the
+        # stored values become the actual RGB bytes.
         filter_type, row = encoded[pos], bytearray(encoded[pos + 1:pos + 1 + stride])
         pos += stride + 1
         for i in range(stride):
@@ -236,13 +235,16 @@ def load_rgb_png(path: Path) -> RGBImage:
 def project_point(
     matrix: tuple[tuple[float, ...], ...], x: float, y: float, z: float
 ) -> tuple[float, float, float]:
-    """Project a world point, returning (u_tilde, v_tilde, w_tilde)."""
+    # P [x,y,z,1]^T gives homogeneous image coordinates.
+    # Perspective division happens later: u = u_tilde / w_tilde and
+    # v = v_tilde / w_tilde.
     p = (x, y, z, 1.0)
     return tuple(sum(row[k] * p[k] for k in range(4)) for row in matrix)
 
 
 def camera_center(matrix: tuple[tuple[float, ...], ...]) -> tuple[float, float, float]:
-    """Solve (C=-M^{-1}p_4) for a camera matrix (P=[M|p_4])."""
+    # For P=[M|p4], the camera center satisfies M C + p4 = 0.
+    # Therefore C = -M^-1 p4. The following is the explicit 3x3 inverse.
     a,b,c = matrix[0][:3]; d,e,f = matrix[1][:3]; g,h,i = matrix[2][:3]
     det = a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g)
     if abs(det) < 1e-12: raise ValueError("Singular camera matrix")
@@ -252,11 +254,14 @@ def camera_center(matrix: tuple[tuple[float, ...], ...]) -> tuple[float, float, 
 
 
 def ray_is_unoccluded(grid: VoxelGrid, point: SurfacePoint, camera: tuple[float, float, float]) -> bool:
-    """Use 3D DDA over the point-to-camera segment, excluding source voxel."""
+    # Step 7: traverse the ray from just outside the face toward the camera.
     eps = 1e-6
+    # Start just outside the face so the point's own occupied voxel does not
+    # incorrectly count as an occluder.
     ox, oy, oz = point.x + eps*point.normal[0], point.y + eps*point.normal[1], point.z + eps*point.normal[2]
     dx, dy, dz = camera[0]-ox, camera[1]-oy, camera[2]-oz
     t0, t1 = 0.0, 1.0
+    # Find the part of the point-to-camera segment that lies inside the grid.
     for origin, delta, low, high in ((ox,dx,grid.xmin,grid.xmax),(oy,dy,grid.ymin,grid.ymax),(oz,dz,grid.zmin,grid.zmax)):
         if abs(delta) < 1e-12:
             if origin < low or origin > high: return True
@@ -269,6 +274,8 @@ def ray_is_unoccluded(grid: VoxelGrid, point: SurfacePoint, camera: tuple[float,
     px,py,pz = ox+t*dx, oy+t*dy, oz+t*dz
     ix,iy,iz = min(grid.nx-1,max(0,int((px-grid.xmin)/grid.dx))), min(grid.ny-1,max(0,int((py-grid.ymin)/grid.dy))), min(grid.nz-1,max(0,int((pz-grid.zmin)/grid.dz)))
     steps, next_t, delta_t = [], [], []
+    # For each axis, record the direction and the next voxel boundary crossing.
+    # This is the setup for the 3D DDA grid traversal.
     for index, position, direction, low, size in ((ix,px,dx,grid.xmin,grid.dx),(iy,py,dy,grid.ymin,grid.dy),(iz,pz,dz,grid.zmin,grid.dz)):
         if direction > 0: steps.append(1); next_t.append(t + (low+(index+1)*size-position)/direction); delta_t.append(size/direction)
         elif direction < 0: steps.append(-1); next_t.append(t + (low+index*size-position)/direction); delta_t.append(-size/direction)
@@ -278,6 +285,7 @@ def ray_is_unoccluded(grid: VoxelGrid, point: SurfacePoint, camera: tuple[float,
     for _ in range(grid.nx + grid.ny + grid.nz + 3):
         if t > t1:
             break
+        # Skip the source voxel. Any other occupied voxel blocks the camera.
         if (ix,iy,iz) != point.voxel and grid.occupied[voxel_index(grid,ix,iy,iz)]: return False
         axis = min(range(3), key=lambda k: next_t[k]); t = next_t[axis]; next_t[axis] += delta_t[axis]
         if axis == 0: ix += steps[0]
@@ -289,7 +297,17 @@ def ray_is_unoccluded(grid: VoxelGrid, point: SurfacePoint, camera: tuple[float,
 
 def assign_true_colors(grid: VoxelGrid, points: list[SurfacePoint], dataset_dir: Path,
                        show_progress: bool = False) -> tuple[list[ColoredPoint], int]:
-    """Median-fuse only foreground, unoccluded camera samples for each point."""
+    """Step 7: assign true RGB colors using only non-occluded camera views.
+
+    Each output surface point is projected into all eight RGB images. A camera
+    contributes only when the projection is in front of the camera, inside the
+    image, and on a foreground silhouette pixel. The point-to-camera segment
+    is then checked with 3D DDA; occupied voxels between the face and camera
+    reject the sample because the point is hidden. The accepted samples are
+    combined with a per-channel median. Points with no visible camera use the
+    neutral-gray fallback value (128, 128, 128).
+    """
+    # Step 7: keep only foreground samples with an unblocked camera ray.
     matrices = [load_projection_matrix(dataset_dir / "calibration" / f"cam{i:02d}.xml") for i in range(8)]
     cameras = [camera_center(matrix) for matrix in matrices]
     silhouettes = [load_p4_pbm(dataset_dir / f"silh_cam{i:02d}_00023_0000008550.pbm") for i in range(8)]
@@ -302,10 +320,15 @@ def assign_true_colors(grid: VoxelGrid, points: list[SurfacePoint], dataset_dir:
         for matrix, camera, silhouette, image in zip(matrices,cameras,silhouettes,images):
             ut,vt,wt=project_point(matrix,point.x,point.y,point.z)
             if wt<=0: continue
+            # Convert homogeneous image coordinates to the nearest pixel.
             u,v=int(ut/wt+0.5),int(vt/wt+0.5)
+            # A sample is useful only if it is inside the image and foreground.
             if u<0 or u>=image.width or v<0 or v>=image.height or not silhouette.is_foreground(u,v): continue
+            # A foreground projection can still belong to a nearer surface.
+            # The ray test filters out that hidden-surface color sample.
             if ray_is_unoccluded(grid,point,camera): samples.append(image.rgb(u,v))
         if samples:
+            # The channelwise median is less sensitive to one bad camera sample.
             channels=tuple(sorted(sample[k] for sample in samples)[len(samples)//2] for k in range(3))
         else: channels=(128,128,128); fallback_count += 1
         colored.append(ColoredPoint(point.x,point.y,point.z,*channels))
@@ -320,7 +343,13 @@ def assign_true_colors(grid: VoxelGrid, points: list[SurfacePoint], dataset_dir:
 
 
 def compute_visual_hull(grid: VoxelGrid, dataset_dir: Path) -> tuple[int, float]:
-    """Carve ``grid`` against all eight calibrated binary silhouettes."""
+    """Step 2: start with EMPTY voxels and keep only centers inside all silhouettes.
+
+    The visual-hull result is reported as both the occupied-voxel count and
+    occupied_count / total_voxels. With the current grid, the result is 74,869
+    occupied voxels, which is 0.124782 of the 600,000-voxel volume.
+    """
+    # Step 2: a voxel survives only if its center is inside every silhouette.
     matrices = [load_projection_matrix(dataset_dir / "calibration" / f"cam{i:02d}.xml")
                 for i in range(8)]
     silhouettes = [load_p4_pbm(dataset_dir / f"silh_cam{i:02d}_00023_0000008550.pbm")
@@ -331,6 +360,8 @@ def compute_visual_hull(grid: VoxelGrid, dataset_dir: Path) -> tuple[int, float]
     for z in grid.z_centers:
         for y in grid.y_centers:
             for x in grid.x_centers:
+                # Start optimistic, then carve the voxel away as soon as one
+                # camera sees its center outside the foreground silhouette.
                 keep = True
                 for matrix, silhouette in zip(matrices, silhouettes):
                     u_tilde, v_tilde, w_tilde = project_point(matrix, x, y, z)
@@ -338,6 +369,8 @@ def compute_visual_hull(grid: VoxelGrid, dataset_dir: Path) -> tuple[int, float]
                         keep = False
                         break
                     # MATLAB/Python image arrays are zero-indexed after loading.
+                    # A point behind a camera or outside the image cannot
+                    # provide silhouette evidence for this voxel.
                     u = int(u_tilde / w_tilde + 0.5)
                     v = int(v_tilde / w_tilde + 0.5)
                     if (u < 0 or u >= silhouette.width or v < 0 or
@@ -354,12 +387,19 @@ def compute_visual_hull(grid: VoxelGrid, dataset_dir: Path) -> tuple[int, float]
 
 
 def voxel_index(grid: VoxelGrid, ix: int, iy: int, iz: int) -> int:
-    """Return the x-fastest flat occupancy index for a valid voxel index."""
+    # Flatten (x,y,z) while keeping x as the fastest-changing index.
     return ix + grid.nx * (iy + grid.ny * iz)
 
 
 def find_surface_voxels(grid: VoxelGrid) -> tuple[bytearray, int, float]:
-    """Mark occupied voxels with at least one empty 6-connected neighbor."""
+    """Step 3: find occupied voxels with at least one empty neighbor.
+
+    A surface voxel is occupied and has an empty or outside-the-grid neighbor
+    among the six axis-aligned neighbors. This step reports the surface count
+    and surface_count / total_voxels. The current result is 26,311 surface
+    voxels, or 0.043852 of the 600,000-voxel grid.
+    """
+    # Step 3: an occupied voxel is surface material if one of six neighbors is empty.
     surface = bytearray(grid.total_voxels)
     surface_count = 0
     neighbor_offsets = ((-1, 0, 0), (1, 0, 0), (0, -1, 0),
@@ -374,6 +414,8 @@ def find_surface_voxels(grid: VoxelGrid) -> tuple[bytearray, int, float]:
                 for dx, dy, dz in neighbor_offsets:
                     nx, ny, nz = ix + dx, iy + dy, iz + dz
                     neighbor_is_empty = (
+                        # A neighbor outside the volume is treated as empty,
+                        # so boundary voxels contribute exposed faces.
                         nx < 0 or nx >= grid.nx or
                         ny < 0 or ny >= grid.ny or
                         nz < 0 or nz >= grid.nz or
@@ -388,7 +430,14 @@ def find_surface_voxels(grid: VoxelGrid) -> tuple[bytearray, int, float]:
 
 
 def generate_output_geometry(grid: VoxelGrid, surface: bytearray) -> list[SurfacePoint]:
-    """Create one output point for every exposed face of a surface voxel."""
+    """Step 4: create one output point at each exposed voxel-face center.
+
+    A face is included when its neighboring voxel is EMPTY or outside the
+    grid. The current model contains 49,292 face-center points from 26,311
+    surface voxels. These numbers are not expected to be equal because one
+    surface voxel can have multiple exposed faces, from one through six.
+    """
+    # Step 4: emit the center of every face next to an empty voxel.
     points: list[SurfacePoint] = []
     face_directions = ((-1, 0, 0), (1, 0, 0), (0, -1, 0),
                        (0, 1, 0), (0, 0, -1), (0, 0, 1))
@@ -411,6 +460,8 @@ def generate_output_geometry(grid: VoxelGrid, surface: bytearray) -> list[Surfac
                         not grid.occupied[voxel_index(grid, nx, ny, nz)]
                     )
                     if neighbor_is_empty:
+                        # Move half a voxel along the face normal to reach the
+                        # center of the exposed face.
                         points.append(SurfacePoint(
                             x=cx + dx * grid.dx / 2,
                             y=cy + dy * grid.dy / 2,
@@ -422,14 +473,27 @@ def generate_output_geometry(grid: VoxelGrid, surface: bytearray) -> list[Surfac
 
 
 def _coordinate_channel(value: float, low: float, high: float) -> int:
-    """Map a coordinate to [0, 255], including a zero-range safeguard."""
+    # Normalize a coordinate range to an 8-bit color channel.
     if high == low:
         return 128
     return max(0, min(255, round(255 * (value - low) / (high - low))))
 
 
 def assign_false_colors(points: list[SurfacePoint]) -> list[ColoredPoint]:
-    """Color output geometry with normalized world X, Y, and Z coordinates."""
+    """Step 5: assign false RGB colors from the reconstructed coordinates.
+
+    First find X_min/X_max, Y_min/Y_max, and Z_min/Z_max over all output
+    points. Then use
+
+        RED   = 255 * (X - X_min) / (X_max - X_min)
+        GREEN = 255 * (Y - Y_min) / (Y_max - Y_min)
+        BLUE  = 255 * (Z - Z_min) / (Z_max - Z_min)
+
+    The values are rounded and clamped to unsigned-byte RGB values. A channel
+    whose coordinate range is zero uses the safe value 128 instead.
+    """
+    # Step 5: red follows X, green follows Y, and blue follows Z.
+    # Each channel is round(255 * (coordinate - minimum) / range).
     if not points:
         return []
     xmin, xmax = min(p.x for p in points), max(p.x for p in points)
@@ -446,7 +510,15 @@ def assign_false_colors(points: list[SurfacePoint]) -> list[ColoredPoint]:
 
 
 def write_ascii_ply(path: Path, points: list[ColoredPoint]) -> None:
-    """Write RGB point vertices in the assignment's required ASCII PLY format."""
+    """Step 6/8: write the colored point cloud as an ASCII PLY file.
+
+    The header's ``element vertex`` value is the exact number of output
+    points. Each following row contains three floating-point coordinates and
+    three unsigned-byte RGB values. The resulting PLY can be opened in
+    MeshLab, which is useful for checking the reconstructed model visually.
+    """
+    # Step 6/8: write one ASCII PLY row for every colored 3D point.
+    # The vertex count in the header must equal the number of rows written.
     header = (
         "ply\n"
         "format ascii 1.0\n"
@@ -469,11 +541,85 @@ def write_ascii_ply(path: Path, points: list[ColoredPoint]) -> None:
             )
 
 
+def write_ppm(path: Path, image: RGBImage) -> None:
+    """Write an RGB image in simple binary PPM format for visual inspection."""
+    with path.open("wb") as stream:
+        stream.write(f"P6\n{image.width} {image.height}\n255\n".encode("ascii"))
+        stream.write(image.pixels)
+
+
+def render_two_light_bonus(points: list[SurfacePoint], grid: VoxelGrid,
+                           dataset_dir: Path, output_dir: Path) -> None:
+    """Step 9 bonus: reproject approximate two-light shadows into each camera.
+
+    Two point lights are placed outside the voxel volume. A surface point is
+    considered lit by a light when the 3D DDA ray from the point to that light
+    does not hit another occupied voxel. Points blocked from both lights are
+    darkened in each input image. Points visible to at least one light are
+    blended slightly lighter. The light positions are marked with red pixels
+    after projection into each camera. The result is saved as PPM images.
+    """
+    lights = ((-4.0, -4.0, 5.0), (4.0, 2.0, 4.0))
+    matrices = [load_projection_matrix(dataset_dir / "calibration" / f"cam{i:02d}.xml") for i in range(8)]
+    silhouettes = [load_p4_pbm(dataset_dir / f"silh_cam{i:02d}_00023_0000008550.pbm") for i in range(8)]
+    images = [load_rgb_png(dataset_dir / f"cam{i:02d}_00023_0000008550.png") for i in range(8)]
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for camera_number, (matrix, silhouette, image) in enumerate(zip(matrices, silhouettes, images)):
+        # Start with the original image and change only projected foreground
+        # points. This keeps the background untouched.
+        pixels = bytearray(image.pixels)
+        for point in points:
+            ut, vt, wt = project_point(matrix, point.x, point.y, point.z)
+            if wt <= 0:
+                continue
+            u, v = int(ut / wt + 0.5), int(vt / wt + 0.5)
+            if (u < 0 or u >= image.width or v < 0 or v >= image.height or
+                    not silhouette.is_foreground(u, v)):
+                continue
+
+            # The existing DDA routine works for a point-to-camera segment;
+            # using a light as the endpoint gives the same occlusion test.
+            lit_by_light = any(ray_is_unoccluded(grid, point, light) for light in lights)
+            pixel_index = 3 * (v * image.width + u)
+            if lit_by_light:
+                # Add a small amount of white to represent direct illumination.
+                for channel in range(3):
+                    pixels[pixel_index + channel] = min(
+                        255, round(0.75 * pixels[pixel_index + channel] + 0.25 * 255)
+                    )
+            else:
+                # The point is behind the reconstructed shape from both lights.
+                for channel in range(3):
+                    pixels[pixel_index + channel] = round(0.45 * pixels[pixel_index + channel])
+
+        # Mark each light if its projection lands inside this image.
+        for light in lights:
+            ut, vt, wt = project_point(matrix, *light)
+            if wt <= 0:
+                continue
+            u, v = int(ut / wt + 0.5), int(vt / wt + 0.5)
+            for dy in range(-4, 5):
+                for dx in range(-4, 5):
+                    mark_u, mark_v = u + dx, v + dy
+                    if (0 <= mark_u < image.width and 0 <= mark_v < image.height and
+                            dx * dx + dy * dy <= 16):
+                        pixel_index = 3 * (mark_v * image.width + mark_u)
+                        pixels[pixel_index:pixel_index + 3] = bytes((255, 0, 0))
+
+        output_image = RGBImage(image.width, image.height, bytes(pixels))
+        write_ppm(output_dir / f"cam{camera_number:02d}_two_light_bonus.ppm", output_image)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Voxel-based visual-hull reconstruction")
     parser.add_argument("--true-color", action="store_true",
                         help="run the full visibility-aware true-color pass with progress")
+    parser.add_argument("--bonus", action="store_true",
+                        help="render the two-light shadow bonus images")
     args = parser.parse_args()
+
+    # Step 1: define the voxel grid.
     grid = define_voxel_grid()
     print(f"Grid: {grid.shape[0]} x {grid.shape[1]} x {grid.shape[2]} = "
           f"{grid.total_voxels} voxels")
@@ -481,27 +627,49 @@ def main() -> None:
           f"{grid.dz:.3f} meters")
     print(f"Occupancy storage: {len(grid.occupied) / 2**20:.2f} MiB")
     dataset_dir = Path(__file__).resolve().parent.parent / "cs532_HW03"
+
+    # Step 2: carve the grid using all eight silhouettes.
     occupied_count, occupied_fraction = compute_visual_hull(grid, dataset_dir)
     print(f"Visual-hull occupied voxels: {occupied_count}")
     print(f"Visual-hull fraction: {occupied_fraction:.6f}")
+
+    # Step 3: find occupied voxels with an empty six-connected neighbor.
     surface, surface_count, surface_fraction = find_surface_voxels(grid)
     print(f"Surface voxels: {surface_count}")
     print(f"Surface fraction of full grid: {surface_fraction:.6f}")
+
+    # Step 4: turn exposed voxel faces into the point-cloud geometry.
     points = generate_output_geometry(grid, surface)
     print(f"Exposed face-center points: {len(points)}")
+
+    # Step 5: color points by their normalized world-space coordinates.
     false_colored_points = assign_false_colors(points)
+
+    # Step 6: write the false-color ASCII PLY.
     ply_path = Path(__file__).resolve().parent / "visual_hull_false_color.ply"
     write_ascii_ply(ply_path, false_colored_points)
     print(f"Wrote false-color PLY: {ply_path.name} "
           f"({len(false_colored_points)} vertices)")
-    # Step 7 is intentionally exposed as assign_true_colors(...), rather than
-    # run by default, because ray casting every point to every camera is slow.
+    # Step 7: assign true colors using foreground and visibility checks.
+    # This is optional at the command line because the ray casting is slower.
     if args.true_color:
         true_colored_points, fallback_count = assign_true_colors(
             grid, points, dataset_dir, show_progress=True
         )
+        true_ply_path = Path(__file__).resolve().parent / "visual_hull_true_color.ply"
+
+        # Step 8: write the true-color ASCII PLY.
+        write_ascii_ply(true_ply_path, true_colored_points)
         print(f"True-color pass complete: {len(true_colored_points)} vertices; "
               f"{fallback_count} neutral-gray fallback points.")
+        print(f"Wrote true-color PLY: {true_ply_path.name} "
+              f"({len(true_colored_points)} vertices)")
+
+    # Step 9 bonus: project approximate two-light shadow and relighting effects.
+    if args.bonus:
+        bonus_dir = Path(__file__).resolve().parent / "two_light_bonus"
+        render_two_light_bonus(points, grid, dataset_dir, bonus_dir)
+        print(f"Wrote two-light bonus images to: {bonus_dir}")
 
 
 if __name__ == "__main__":
